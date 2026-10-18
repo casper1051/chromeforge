@@ -16,3 +16,16 @@ confirm_proceed() {
 
 echo "This script will make unsupported changes to your device and potentially brick it."
 confirm_proceed
+
+cp /sbin/init /sbin/init_old
+cp /sbin/init /sbin/init_backup
+
+rm /sbin/init
+
+echo -e "#!/bin/bash\nsleep 5\n/sbin/init_old" > /sbin/init
+
+chmod +x /sbin/init
+chmod +x /sbin/init_old
+chmod +x /sbin/init_backup
+
+
