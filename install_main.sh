@@ -15,4 +15,4 @@ confirm_proceed() {
 }
 
 echo "This script will make unsupported changes to your device and potentially brick it."
-confirm_proceed()
+confirm_proceed
