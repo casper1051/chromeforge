@@ -22,7 +22,7 @@ cp /sbin/init /sbin/init_backup
 
 rm /sbin/init
 
-echo -e "#!/bin/bash\nsleep 5\n/sbin/init_old" > /sbin/init
+echo -e "#!/bin/bash\nsleep 5\nexec /sbin/init_old \"$@\" " > /sbin/init
 
 chmod +x /sbin/init
 chmod +x /sbin/init_old
