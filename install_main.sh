@@ -17,13 +17,16 @@ confirm_proceed() {
 echo "This script will make unsupported changes to your device and potentially brick it."
 confirm_proceed
 
+echo "Backing up existing files"
 cp /sbin/init /sbin/init_old
 cp /sbin/init /sbin/init_backup
 
+echo "Overwriting init"
 rm /sbin/init
 
 echo -e "#!/bin/bash\nsleep 5\nexec /sbin/init_old \"$@\" " > /sbin/init
 
+echo "Making executables"
 chmod +x /sbin/init
 chmod +x /sbin/init_old
 chmod +x /sbin/init_backup
