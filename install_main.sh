@@ -24,43 +24,140 @@ cp /sbin/init /sbin/init_backup
 echo "Overwriting init"
 rm -f /sbin/init
 
+#trust its not vibecoded at all on any level
+
 cat << 'EOF' > "/sbin/init"
-#!/bin/sh
 
-if [ -x /bin/frecon-lite ]; then
-    /bin/frecon-lite --enable-vt1 --daemon --no-login --enable-vts --pre-create-vts --num-vts=4 --enable-gfx
-    TARGET_TTY="/run/frecon/vt1"
-elif [ -x /sbin/frecon ]; then
-    /sbin/frecon --enable-vt1 --daemon --no-login --enable-vts --pre-create-vts --num-vts=4 --enable-gfx
-    TARGET_TTY="/run/frecon/vt1"
-else
+#!/bin/bash
 
-    kernel_console=$(cat /proc/cmdline 2>/dev/null | tr ' ' '\n' | grep '^console=' | tail -n 1 | cut -d= -f2 | cut -d, -f1)
-    if [ -n "${kernel_console}" ] && [ -c "/dev/${kernel_console}" ]; then
-        TARGET_TTY="/dev/${kernel_console}"
-    elif [ -c "/dev/tty1" ]; then
-        TARGET_TTY="/dev/tty1"
+ORIGINAL_INIT="/sbin/init_old"
+LOG="/root/log.txt"
+FRECON_TTY="/run/frecon/vt1"
+
+export PATH="/sbin:/bin:/usr/sbin:/usr/bin"
+
+# Verify original init first.
+if [[ ! -x "$ORIGINAL_INIT" ]]; then
+    echo "FATAL: Original init missing" > /dev/kmsg
+    exec /bin/sh
+fi
+
+# Initialize logging.
+if ! touch "$LOG" 2>/dev/null; then
+    exec "$ORIGINAL_INIT" "$@"
+fi
+
+exec >> "$LOG" 2>&1
+
+# Enable command tracing and error handling.
+set -x
+set -E
+set -o errtrace
+
+log() {
+    echo "[MODMIUM] $*"
+    echo "<6>MODMIUM: $*" > /dev/kmsg 2>/dev/null || true
+}
+
+# Fail-open handler.
+fallback() {
+    local reason="$1"
+
+    # Prevent recursive ERR traps.
+    trap - ERR
+    set +e
+
+    log "FALLBACK: $reason"
+    log "Executing original ChromeOS init"
+
+    if [[ -x "$ORIGINAL_INIT" ]]; then
+        exec "$ORIGINAL_INIT" "${ORIGINAL_ARGS[@]}"
+    fi
+
+    log "FATAL: Original init unavailable"
+    exec /bin/sh
+}
+
+# Preserve original arguments.
+ORIGINAL_ARGS=("$@")
+
+# Capture unexpected command failures.
+trap 'fallback "Unexpected error at line $LINENO: $BASH_COMMAND (exit $?)"' ERR
+
+start_frecon() {
+    local FRECON=""
+
+    if [[ -x /sbin/frecon-lite ]]; then
+        FRECON="/sbin/frecon-lite"
+    elif [[ -x /sbin/frecon ]]; then
+        FRECON="/sbin/frecon"
     else
-        TARGET_TTY="/dev/console"
+        log "No frecon executable found"
+        return 1
     fi
-fi
 
-if [ "${TARGET_TTY}" = "/run/frecon/vt1" ]; then
-    loop=10
-    while [ ! -e "${TARGET_TTY}" ] && [ ${loop} -gt 0 ]; do
+    log "Using $FRECON"
+
+    mkdir -p /run/frecon || return 1
+
+    if [[ "$FRECON" == "/sbin/frecon" ]]; then
+        /sbin/udevd --daemon || return 1
+        udevadm trigger || return 1
+        udevadm settle || return 1
+    fi
+
+    log "Starting frecon"
+
+    "$FRECON" \
+        --enable-vt1 \
+        --daemon \
+        --no-login \
+        --enable-vts \
+        --pre-create-vts \
+        --num-vts=4 \
+        --enable-gfx || return 1
+
+    for ((i=0; i<30; i++)); do
+        [[ -e "$FRECON_TTY" ]] && break
         sleep 1
-        loop=$((loop - 1))
-    fi
-    [ ! -e "${TARGET_TTY}" ] && TARGET_TTY="/dev/console"
-fi
+    done
 
-echo "Dropping to interactive shell on ${TARGET_TTY}. Type 'exit' to boot normally." > "${TARGET_TTY}"
+    [[ -e "$FRECON_TTY" ]] || return 1
 
-setsid cttyhack sh < "${TARGET_TTY}" > "${TARGET_TTY}" 2>&1
+    log "Frecon VT1 ready"
 
-echo "Shell exited. Continuing to normal system init..." > "${TARGET_TTY}"
+    printf '\033]switchvt:1\a' > /run/frecon/current || return 1
 
-exec /sbin/init_old "$@"
+    {
+        echo ""
+        echo "================================"
+        echo "       MODMIUM BOOT TEST"
+        echo "================================"
+        echo ""
+        echo "Frecon initialized successfully."
+        echo ""
+        echo "Starting ChromeOS in 3 seconds..."
+    } > "$FRECON_TTY" || return 1
+
+    return 0
+}
+
+log "Modmium init started"
+
+start_frecon
+
+log "Frecon initialization completed"
+
+sleep 3
+
+log "Starting original ChromeOS init"
+
+trap - ERR
+exec "$ORIGINAL_INIT" "${ORIGINAL_ARGS[@]}"
+
+# Only reached if exec fails.
+fallback "Original init execution failed"
+
 EOF
 
 echo "Making executables"
